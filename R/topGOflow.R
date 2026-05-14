@@ -204,12 +204,14 @@ run_go_enrichment <- function(query_genes,
   }
 
   # ── determine universe gene IDs (for building topGO factor) ----------------
-  # When dds is available, use its rownames as the full universe pool;
-  # otherwise use query + background directly.
+  # Must use rownames(dds) when available — the logical subsetting in
+  # .build_topgo_object depends on this. Without it, gene IDs can fail to
+  # match the GO database and topGO throws "GOBPTerm not found".
+  # When dds is absent, fall back to names(GOdb) so IDs are guaranteed to match.
   if (!is.null(dds)) {
     universe_ids <- rownames(dds)
   } else {
-    universe_ids <- unique(c(query_genes, bg_genes))
+    universe_ids <- names(GOdb)
   }
 
   # ── run per ontology --------------------------------------------------------
@@ -263,6 +265,9 @@ run_go_enrichment <- function(query_genes,
                                 GOdb,
                                 ontology  = "BP",
                                 node_size = 10) {
+  # Mirror the logic from the original makeTopGOobject:
+  # both logical vectors are defined over the full universe_ids,
+  # then in_query is subset BY in_universe before naming.
   in_universe <- universe_ids %in% c(query_genes, bg_genes)
   in_query    <- universe_ids %in% query_genes
 
