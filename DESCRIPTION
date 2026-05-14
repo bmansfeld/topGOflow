@@ -1,0 +1,26 @@
+Package: topGOflow
+Title: Streamlined GO Term Enrichment with Expression-Matched Backgrounds
+Version: 0.1.0
+Authors@R: person("Lab", "Author", role = c("aut", "cre"), email = "author@example.com")
+Description: A wrapper around topGO for non-model organism GO enrichment analysis.
+    Accepts GAF files or pre-built gene-to-GO mappings, performs expression-matched
+    background selection via MatchIt (using a DESeq2 dds object) or accepts a
+    user-supplied background, and returns tidy result tables. Designed for ease of
+    use with graduate students and postdocs working on non-model species.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Imports:
+    dplyr,
+    tidyr,
+    readr,
+    ggplot2,
+    methods,
+    MatchIt,
+    topGO,
+    DESeq2,
+    GO.db
+Suggests:
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
