@@ -1,6 +1,6 @@
 Package: topGOflow
 Title: Streamlined GO Term Enrichment with Expression-Matched Backgrounds
-Version: 0.1.3
+Version: 0.1.3.1
 Authors@R: person("Lab", "Author", role = c("aut", "cre"), email = "author@example.com")
 Description: A wrapper around topGO for non-model organism GO enrichment analysis.
     Accepts GAF files or pre-built gene-to-GO mappings, performs expression-matched
