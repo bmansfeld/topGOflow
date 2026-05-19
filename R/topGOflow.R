@@ -5,13 +5,12 @@
 ##   read_gaf()                – parse a GAF file into a gene2GO list
 ##   run_go_enrichment()       – full matched or unmatched analysis in one call
 ##   plot_matching()           – QC plot of expression matching
-##   go_table()                – tidy result table from a topGOdata object
-##   genes_in_term()           – which query genes drive a given GO term
+##   filter_significant()      – filter result list to significant terms
 ##
 ## Internal helpers (not exported):
 ##   .match_background()       – MatchIt expression matching
 ##   .build_topgo_object()     – construct topGOdata for one ontology
-##   .run_tests()              – run weight01 Fisher test and call GenTable
+##   .run_tests()              – run weight01 Fisher test, filter, add gene column
 ################################################################################
 
 #' @importFrom dplyr select mutate group_by summarise filter left_join pull bind_rows
@@ -134,7 +133,13 @@ read_gaf <- function(gaf_file,
 #'   when `background = "matched"`. Default 5.
 #' @param node_size Minimum number of genes required in a GO term for it to be
 #'   tested. Default 10. Larger values (e.g. 20–50) reduce noise.
-#' @param n_top Maximum number of GO terms to return per ontology. Default 200.
+#' @param n_top Maximum number of GO terms to consider per ontology before
+#'   p-value filtering. Default 200.
+#' @param pval P-value threshold for filtering results. Only terms with
+#'   `Fisher.weight01 < pval` are returned. Default 0.05.
+#' @param add_genes Logical. If TRUE (default), adds a `query_genes_in_term`
+#'   column to each result table containing the query genes annotated to that
+#'   term, collapsed as a semicolon-separated string.
 #' @param plot Logical. If TRUE, print a [plot_matching()] density plot when
 #'   expression matching is used. Default FALSE.
 #'
@@ -147,6 +152,8 @@ read_gaf <- function(gaf_file,
 #'     \item{Significant}{Number of query genes annotated to this term.}
 #'     \item{Expected}{Expected count under the null.}
 #'     \item{Fisher.weight01}{p-value from the topology-aware weight01 test.}
+#'     \item{query_genes_in_term}{Semicolon-separated query genes annotated to
+#'       this term (only present when `add_genes = TRUE`).}
 #'   }
 #'
 #' @examples
@@ -173,6 +180,8 @@ run_go_enrichment <- function(query_genes,
                               n_matched   = 5,
                               node_size   = 10,
                               n_top       = 200,
+                              pval        = 0.05,
+                              add_genes   = TRUE,
                               plot        = FALSE) {
 
   # ── validate ----------------------------------------------------------------
@@ -226,7 +235,7 @@ run_go_enrichment <- function(query_genes,
       node_size    = node_size
     )
     message(sprintf("[topGOflow] Running weight01 Fisher test for %s ...", ont))
-    .run_tests(tgd, n_top = n_top)
+    .run_tests(tgd, query_genes = query_genes, pval = pval, add_genes = add_genes, n_top = n_top)
   })
 
   names(results) <- ontologies
@@ -288,7 +297,7 @@ run_go_enrichment <- function(query_genes,
 # ── HELPER: RUN TESTS & FORMAT ────────────────────────────────────────────────
 
 #' @keywords internal
-.run_tests <- function(tgd, n_top = 200) {
+.run_tests <- function(tgd, query_genes, pval = 0.05, add_genes = TRUE, n_top = 200) {
   res_w01 <- topGO::runTest(tgd, algorithm = "weight01", statistic = "Fisher")
 
   n_terms <- min(res_w01@geneData[4], n_top)
@@ -306,6 +315,17 @@ run_go_enrichment <- function(query_genes,
     1e-30,
     as.numeric(tbl$Fisher.weight01)
   )
+
+  # Filter to significant terms
+  tbl <- tbl[tbl$Fisher.weight01 < pval, ]
+
+  # Optionally add a column of query genes annotated to each term
+  if (add_genes && nrow(tbl) > 0) {
+    tbl$query_genes_in_term <- sapply(tbl$GO.ID, function(go_id) {
+      annotated <- unlist(topGO::genesInTerm(tgd, go_id))
+      paste(sort(intersect(query_genes, annotated)), collapse = "; ")
+    })
+  }
 
   tbl
 }
@@ -357,21 +377,125 @@ plot_matching <- function(query_genes, bg_genes, dds) {
 }
 
 
+# ── QC PLOT ───────────────────────────────────────────────────────────────────
+
+#' Plot expression distributions for QC of background matching
+#'
+#' Produces a density plot of log10(mean normalised expression) for three gene
+#' sets: all genes in `dds`, the query set, and the matched background. Use
+#' this to verify that the background distribution is similar to the query.
+#'
+#' @param query_genes Character vector of query gene IDs.
+#' @param bg_genes Character vector of background gene IDs (from matching or
+#'   user-supplied).
+#' @param dds A `DESeqDataSet` object.
+#'
+#' @return A `ggplot` object.
+#'
+#' @export
+plot_matching <- function(query_genes, bg_genes, dds) {
+  mean_exp <- rowMeans(DESeq2::counts(dds, normalized = TRUE))
+
+  df <- dplyr::bind_rows(
+    "All genes"  = data.frame(exp = mean_exp[rownames(dds)]),
+    "Query"      = data.frame(exp = mean_exp[query_genes]),
+    "Background" = data.frame(exp = mean_exp[bg_genes]),
+    .id = "Group"
+  )
+  df$Group <- factor(df$Group, levels = c("All genes", "Background", "Query"))
+
+  ggplot2::ggplot(df, ggplot2::aes(x = exp, colour = Group, fill = Group)) +
+    ggplot2::geom_density(alpha = 0.15, linewidth = 0.8) +
+    ggplot2::scale_x_log10(name = "Mean normalised expression (log10)") +
+    ggplot2::scale_colour_manual(values = c("All genes" = "grey50",
+                                            "Background" = "#2196F3",
+                                            "Query"      = "#E91E63")) +
+    ggplot2::scale_fill_manual(values = c("All genes" = "grey50",
+                                          "Background" = "#2196F3",
+                                          "Query"      = "#E91E63")) +
+    ggplot2::labs(
+      title    = "Expression matching QC",
+      subtitle = sprintf("Query: %d genes | Background: %d genes",
+                         length(query_genes), length(bg_genes)),
+      y        = "Density"
+    ) +
+    ggplot2::theme_bw(base_size = 12)
+}
+
+
 # ── GENE LOOKUP ───────────────────────────────────────────────────────────────
+
+#' Build a topGOdata object for gene-level lookup
+#'
+#' Constructs a `topGOdata` object using the same background matching logic as
+#' [run_go_enrichment()]. Use this when you need to call [genes_in_term()] to
+#' find which query genes drive a particular GO term.
+#'
+#' Accepts the same `background` and `dds` arguments as [run_go_enrichment()]
+#' so the universe is identical to the one used in your enrichment analysis.
+#'
+#' @inheritParams run_go_enrichment
+#' @param ontology Single ontology string: `"BP"`, `"MF"`, or `"CC"`.
+#'
+#' @return A `topGOdata` object.
+#'
+#' @examples
+#' \dontrun{
+#' tgd <- build_tgd(my_genes, GOdb, ontology = "BP", background = "matched", dds = dds)
+#' genes_in_term("GO:0006355", my_genes, tgd)
+#' }
+#'
+#' @export
+build_tgd <- function(query_genes,
+                      GOdb,
+                      ontology   = "BP",
+                      background = "matched",
+                      dds        = NULL,
+                      n_matched  = 5,
+                      node_size  = 10) {
+
+  ontology    <- match.arg(ontology, c("BP", "MF", "CC"))
+  query_genes <- unique(as.character(query_genes))
+
+  if (identical(background, "matched")) {
+    if (is.null(dds)) stop("`dds` required when background = 'matched'.")
+    bg_genes <- .match_background(query_genes, dds, nR = n_matched)
+  } else if (identical(background, "full")) {
+    if (is.null(dds)) stop("`dds` required when background = 'full'.")
+    bg_genes <- rownames(dds)
+  } else if (is.character(background)) {
+    bg_genes <- unique(background)
+  } else {
+    stop("`background` must be 'matched', 'full', or a character vector of gene IDs.")
+  }
+
+  universe_ids <- if (!is.null(dds)) rownames(dds) else names(GOdb)
+
+  .build_topgo_object(query_genes, bg_genes, universe_ids, GOdb, ontology, node_size)
+}
+
 
 #' Retrieve query genes annotated to a specific GO term
 #'
-#' After running [run_go_enrichment()], use this to find which of your query
-#' genes are driving enrichment of a particular GO term.
+#' Finds which genes from your query set are annotated to a given GO term.
+#' Requires a `topGOdata` object built by [build_tgd()].
 #'
 #' @param go_term Character. A GO term accession (e.g. `"GO:0006355"`).
 #' @param query_genes Character vector of query gene IDs.
-#' @param tgd A `topGOdata` object. Obtained internally by
-#'   [run_go_enrichment()] — pass the object returned by `.build_topgo_object()`
-#'   or use [get_topgo_object()] to retrieve it.
+#' @param tgd A `topGOdata` object from [build_tgd()].
 #'
-#' @return A character vector of gene IDs from `query_genes` that are
-#'   annotated to `go_term`.
+#' @return A character vector of gene IDs from `query_genes` annotated to `go_term`.
+#'
+#' @examples
+#' \dontrun{
+#' tgd <- build_tgd(my_genes, GOdb, ontology = "BP", background = "matched", dds = dds)
+#'
+#' results <- run_go_enrichment(my_genes, GOdb, dds = dds)
+#' sig_terms <- filter_significant(results)
+#'
+#' # Look up genes for any term of interest
+#' genes_in_term("GO:0006355", my_genes, tgd)
+#' }
 #'
 #' @export
 genes_in_term <- function(go_term, query_genes, tgd) {
