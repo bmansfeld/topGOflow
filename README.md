@@ -23,7 +23,8 @@ BiocManager::install(c("topGO", "DESeq2", "GO.db"))
 install.packages(c("MatchIt", "dplyr", "readr", "ggplot2"))
 
 # Install topGOflow from source
-remotes::install_github("bmansfeld/topGOflow")
+# (once on GitHub, replace with remotes::install_github("yourlab/topGOflow"))
+install.packages("path/to/topGOflow", repos = NULL, type = "source")
 ```
 
 ---

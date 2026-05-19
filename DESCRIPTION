@@ -22,5 +22,7 @@ Imports:
     DESeq2,
     GO.db
 Suggests:
+    AnnotationForge,
+    rrvgo,
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
